@@ -2,6 +2,8 @@
 
 namespace Mmoreramerino\GearmanBundle\Service;
 
+use Symfony\Component\DependencyInjection\ContainerInterface;
+
 use Mmoreramerino\GearmanBundle\Service\GearmanService;
 use Mmoreramerino\GearmanBundle\Service\GearmanInterface;
 use Mmoreramerino\GearmanBundle\Exceptions\NoCallableGearmanMethodException;
@@ -17,9 +19,14 @@ class GearmanClient extends GearmanService
     /**
      * Construct method.
      * Performs all init actions, like initialize tasks structure
+     *
+     * @param ContainerInterface $container Container
      */
-    public function __construct()
+    public function __construct(ContainerInterface $container)
     {
+        $this->setContainer($container);
+        $settings = $this->loadSettings();
+        $this->server = $settings['defaults']['servers'];
         $this->resetTaskStructure();
     }
 
@@ -29,6 +36,8 @@ class GearmanClient extends GearmanService
      * @var array
      */
     public $server = null;
+
+    protected $client;
 
     /**
      * If workers are not loaded, they're loaded and returned.
@@ -79,7 +88,7 @@ class GearmanClient extends GearmanService
      *
      * @return mixed Return result of the call
      */
-    private function enqueue($jobName, $params, $method, $unique)
+    protected function enqueue($jobName, $params, $method, $unique)
     {
         $worker = $this->getJob($jobName);
         if (false !== $worker) {
@@ -103,9 +112,10 @@ class GearmanClient extends GearmanService
      *
      * @return mixed  Return result of the GearmanClient call
      */
-    private function doEnqueue(Array $worker, $params = '', $method = 'do', $unique = null)
+    protected function doEnqueue(Array $worker, $params = '', $method = 'do', $unique = null)
     {
         $gmclient = new \GearmanClient();
+        $this->client = $gmclient;
         $this->assignServers($gmclient);
 
         return $gmclient->$method($worker['job']['realCallableName'], serialize($params), $unique);
@@ -133,14 +143,16 @@ class GearmanClient extends GearmanService
      *
      * @return GearmanClient Returns self object
      */
-    private function assignServers(\GearmanClient $gearmanClient)
+    protected function assignServers(\GearmanClient $gearmanClient)
     {
+        //var_dump($this->server); die();
         if (null === $this->server || !is_array($this->server)) {
 
             $gearmanClient->addServer();
         } else {
-
-            $gearmanClient->addServer($this->server[0], $this->server[1]);
+            foreach ($this->server as $serverName => $options) {
+                $gearmanClient->addServer($options['hostname'], $options['port']);
+            }
         }
 
         return $this;
@@ -434,7 +446,7 @@ class GearmanClient extends GearmanService
      *
      * @return GearmanClient Return this object
      */
-    private function enqueueTask($name, $params, $context, $unique, $method)
+    protected function enqueueTask($name, $params, $context, $unique, $method)
     {
         $task = array(
             'name'      =>  $name,
@@ -455,7 +467,7 @@ class GearmanClient extends GearmanService
      *
      * @return GearmanClient Return this object
      */
-    private function addTaskToStructure(array $task)
+    protected function addTaskToStructure(array $task)
     {
         $this->taskStructure['tasks'][] = $task;
 
@@ -475,6 +487,7 @@ class GearmanClient extends GearmanService
     {
         $taskStructure = $this->taskStructure;
         $gearmanClient = new \GearmanClient();
+        $this->client = $gearmanClient;
         $this->assignServers($gearmanClient);
 
         foreach ($taskStructure['tasks'] as $task) {
@@ -487,5 +500,15 @@ class GearmanClient extends GearmanService
         }
 
         return $gearmanClient->runTasks();
+    }
+    /**
+	 * Gets the status of a job
+	 *
+	 * @param JobHandler $jobHandler Gearman Job handles
+	 * @return mixed
+	 */
+    public function getJobStatus($jobHandler)
+    {
+        return $this->client->jobStatus($jobHandler);
     }
 }

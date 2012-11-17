@@ -5,7 +5,6 @@
  *
  * @author Marc Morera <yuhu@mmoreram.com>
  */
-
 class Gearman_Autoloader
 {
     /**

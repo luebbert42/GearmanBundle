@@ -4,14 +4,22 @@ parameters:
     gearman.client.class:       Mmoreramerino\GearmanBundle\Service\GearmanClient
     gearman.cache.class:        Mmoreramerino\GearmanBundle\Service\GearmanCache
     gearman.cache.loader.class: Mmoreramerino\GearmanBundle\Service\GearmanCacheLoader
-    gearman.execute.class:  Mmoreramerino\GearmanBundle\Service\GearmanExecute
+    gearman.execute.class:      Mmoreramerino\GearmanBundle\Service\GearmanExecute
     gearman.settings.class:     Mmoreramerino\GearmanBundle\Service\GearmanSettings
-    gearman.describer.class:     Mmoreramerino\GearmanBundle\Service\GearmanDescriber
+    gearman.describer.class:    Mmoreramerino\GearmanBundle\Service\GearmanDescriber
+    gearman.helper.class:       Mmoreramerino\GearmanBundle\Helper\GearmanHelper
+    gearman.entity_manager_name:     gearman
+
+    
 services:
     gearman:
         class: %gearman.client.class%
-        calls:
-          - [setContainer,  [@service_container]]
+        arguments: [@service_container]
+          
+    gearman.helper:
+        class: %gearman.helper.class%
+        arguments: [@service_container, %gearman.entity_manager_name%, @event_dispatcher]
+          
     gearman.settings:
         class: %gearman.settings.class%
         calls:
@@ -34,3 +42,11 @@ services:
         class: %gearman.describer.class%
         calls:
           - [setContainer,  [@service_container]]
+          
+    gearman.listener.persistent_queue.change:
+        class: Mmoreramerino\GearmanBundle\Event\Listener\QueueStatusChangeListener
+        arguments: [@service_container]
+        tags:
+            - { name: kernel.event_listener,  event: gearman.event.job_status_changed, method: onStatusChange}
+        
+          
