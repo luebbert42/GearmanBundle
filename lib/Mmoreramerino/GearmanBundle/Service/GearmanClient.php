@@ -502,11 +502,11 @@ class GearmanClient extends GearmanService
         return $gearmanClient->runTasks();
     }
     /**
-	 * Gets the status of a job
-	 *
-	 * @param JobHandler $jobHandler Gearman Job handles
-	 * @return mixed
-	 */
+     * Gets the status of a job
+     *
+     * @param JobHandler $jobHandler Gearman Job handles
+     * @return mixed
+     */
     public function getJobStatus($jobHandler)
     {
         return $this->client->jobStatus($jobHandler);

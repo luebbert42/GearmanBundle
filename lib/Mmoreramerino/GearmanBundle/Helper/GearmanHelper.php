@@ -24,6 +24,7 @@ use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\DependencyInjection\ContainerAwareInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use PDO;
+use DateTime;
 
 /**
  * Gearman Helper
@@ -50,7 +51,7 @@ class GearmanHelper extends GearmanClient
     const PRIORITY_LOW    = 0;
 
     //Max Retries
-    const MAX_RETRY_COUNT = 5;
+    const MAX_RETRY_COUNT = 20;
 
     protected $priorityMap = array(self::PRIORITY_HIGH   => 'High',
                                    self::PRIORITY_NORMAL => '',
@@ -151,7 +152,7 @@ class GearmanHelper extends GearmanClient
         $dql = "SELECT qc
                   FROM MmoreramerinoGearmanBundle:QueueControl qc
                   WHERE qc.queueStatus = :queueStatus
-                  ORDER BY qc.priority DESC, qc.createDate DESC";
+                  ORDER BY qc.priority DESC, qc.lastUpdateDate DESC";
 
         $query = $this->entityManager->createQuery($dql)->setMaxResults($limit);
         $query->setParameters(array('queueStatus' => self::STATUS_NEW));
@@ -266,8 +267,11 @@ class GearmanHelper extends GearmanClient
         }
 
         if ($parent !== null && $queueJob->getParent() === null ) {
-            $queueJob->setParent($parent);
+            //This is  a litte WTF...
+        	$queueJob->setParent($parent);
             $parent->addChild($queueJob);
+            //END WTF
+			$this->increaseChildCounter($parent->getId());
             $this->entityManager->persist($parent);
 
         }
@@ -288,6 +292,43 @@ class GearmanHelper extends GearmanClient
         return $queueJob;
 
     }
+
+    /**
+     * Increases the amount of pending jobs and children associated with a job
+     * @param string $parentJobId
+     *
+     * @return int
+     *
+     */
+    private function increaseChildCounter($parentJobId)
+    {
+		//TODO: Needs a prepare statement
+    	$updateQuery = $this->entityManager->createQuery("UPDATE MmoreramerinoGearmanBundle:QueueControl qc
+    			SET qc.totalChildren = qc.totalChildren + 1,
+    			qc.incompleteJobs = qc.incompleteJobs + 1
+    			WHERE qc.id = '$parentJobId'");
+
+    	return $updateQuery->execute();
+
+    }
+
+    /**
+     * Decreases the amount of pending jobs and children associated with a job
+     * @param string $parentJobId
+     *
+     * @return int
+     *
+     */
+    public function decreaseChildCounter($parentJobId)
+    {
+    	//TODO: Needs a prepare statement
+    	$updateQuery = $this->entityManager->createQuery("UPDATE MmoreramerinoGearmanBundle:QueueControl qc
+    			SET qc.incompleteJobs = qc.incompleteJobs - 1
+    			WHERE qc.id = '$parentJobId' AND qc.incompleteJobs > 1 ");
+
+    	return $updateQuery->execute();
+
+    }
     /**
      * Submit jobs by function name
      *
@@ -300,6 +341,17 @@ class GearmanHelper extends GearmanClient
     {
         return $this->submitJobsBy('functionName', $functionName, $limit);
     }
+
+    /**
+     * Sends a job by external Id
+     *
+     * @param string $externalId Job/Worker external Id
+     * @return QueueControl
+     */
+    public function submitJobsByExternalId($externalId)
+    {
+        return $this->submitJobsBy('externalId', $externalId, 0);
+    }
     /**
      * Sends a job by Id
      *
@@ -309,6 +361,17 @@ class GearmanHelper extends GearmanClient
     public function submitJobsById($jobId)
     {
         return $this->submitJobsBy('id', $jobId, 1);
+    }
+
+    /**
+     * Sends a job by Id
+     *
+     * @param string $jobId Job/Worker uuid
+     * @return QueueControl
+     */
+    public function submitJobsByParent($parent)
+    {
+        return $this->submitJobsBy('parent', $parent, 0);
     }
 
     /**
@@ -343,7 +406,10 @@ class GearmanHelper extends GearmanClient
 
                 if (!in_array($childStatus, array(self::STATUS_COMPLETED, self::STATUS_FAILED, self::STATUS_NEW))) {
                      //Forced to query DB again by dea
+                     $this->updatePersistentQueueItem($job, self::STATUS_WAITING, 'Waiting');
+
                      $this->entityManager->detach($job);
+
                      echo 'Still have incompleted jobs '.$childStatus.PHP_EOL;
                      return false;
                 }
@@ -365,8 +431,11 @@ class GearmanHelper extends GearmanClient
     {
         //If a job have a status waiting, it means it have children
         if (!$this->forceToReProcess && ($job->getQueueStatus()->getId() === self::STATUS_COMPLETED)) {
-            echo 'Job was completed already'.PHP_EOL;
-            return true;
+            $msg = 'Job was completed already';
+            $this->fireStatusChangeEvent($job, self::STATUS_COMPLETED, $msg);
+
+            echo $msg.PHP_EOL;
+            return self::STATUS_COMPLETED;
         }
 
         $job->increaseRetryCounter();
@@ -380,13 +449,17 @@ class GearmanHelper extends GearmanClient
             echo 'Sending '.$job->getId(). ' to gearman..'.PHP_EOL;
             $this->{$methodName}($job->getFunctionName(), $job->getData(), $job->getId());
 
+            //$datetime = new DateTime('now', new \DateTimeZone('UTC'));
+            $datetime = new DateTime();
+
             //Queued to Gearman processing Queue
             $job->setQueueStatus($statusQueued);
+            $job->setLastUpdateDate($datetime);
 
             $this->entityManager->persist($job);
             $this->entityManager->flush($job);
 
-            return true;
+            return self::STATUS_QUEUE;
 
         } catch (\Exception $e) {
 
@@ -406,17 +479,30 @@ class GearmanHelper extends GearmanClient
      */
     private function submitJobsBy($field, $value, $limit)
     {
+        $statusCondition =  '';
+        $parameters = array('fieldValue'  => $value);
+
+        //If is not forced to reprocess it will require status new
+        if (!$this->forceToReProcess) {
+            $statusCondition = 'qc.queueStatus = :queueStatus AND ';
+            $parameters['queueStatus'] = self::STATUS_NEW;
+        }
 
         $dql = "SELECT qc
           FROM MmoreramerinoGearmanBundle:QueueControl qc
-          WHERE
-          qc.queueStatus = :queueStatus AND
+          WHERE $statusCondition
           qc.{$field} = :fieldValue
-          ORDER BY qc.priority DESC, qc.createDate DESC";
+          ORDER BY qc.priority DESC, qc.lastUpdateDate DESC";
 
-        $query = $this->entityManager->createQuery($dql)->setMaxResults($limit);
-        $query->setParameters(array('queueStatus' => self::STATUS_NEW,
-                                    'fieldValue'  => $value));
+
+        $query = $this->entityManager->createQuery($dql);
+
+        //Submit ALL with no limit
+        if ($limit !== 0) {
+            $query->setMaxResults($limit);
+        }
+
+        $query->setParameters($parameters);
 
         $result = $query->getResult();
 
@@ -459,6 +545,9 @@ class GearmanHelper extends GearmanClient
      */
     public function findJobById($jobId)
     {
+        //This entity may be stil in memory
+        $this->entityManager->clear();
+
         $job = $this->entityManager->getRepository('MmoreramerinoGearmanBundle:QueueControl')->find($jobId);
 
 
@@ -484,11 +573,24 @@ class GearmanHelper extends GearmanClient
         $this->entityManager->persist($job);
         $this->entityManager->flush($job);
 
+        $this->fireStatusChangeEvent($job, $statusId, $msg);
+
+        return $job;
+    }
+    /**
+     * Fires an event on status change
+     *
+     * @param QueueControl $job      Job
+     * @param int          $statusId Status Id
+     * @param string       $msg      Message
+     */
+    private function fireStatusChangeEvent(QueueControl $job, $statusId, $msg)
+    {
+
         $event = new JobQueueStatusChangeEvent($this, $job, $statusId, $msg);
 
         $this->dispatcher->dispatch(GearmanEvents::JOB_STATUS_CHANGED, $event);
 
-        return $job;
     }
 
     /**
@@ -537,9 +639,9 @@ class GearmanHelper extends GearmanClient
     public function cleanupPersistentQueue()
     {
 
-        $statusCheck = array(self::STATUS_WAITING => 10,
-                             self::STATUS_WORKING => 5,
-                             self::STATUS_QUEUE   => 5);
+        $statusCheck = array(self::STATUS_WAITING => 30,
+                             self::STATUS_WORKING => 15,
+                             self::STATUS_QUEUE   => 15);
 
         $limit = 100;
 
@@ -570,7 +672,7 @@ class GearmanHelper extends GearmanClient
 
             $this->enqueueJob($job);
 
-            $this->entityManager->detach($job);
+            //$this->entityManager->detach($job);
 
         }
 
@@ -596,21 +698,24 @@ class GearmanHelper extends GearmanClient
     /**
      * Retries failed jobs
      */
-    public function retryFailedJobs()
+    public function retryFailedJobs($limit = 100)
     {
-        $limit = 100;
-
         $dql = "SELECT qc
                 FROM MmoreramerinoGearmanBundle:QueueControl qc
                 WHERE
                 qc.queueStatus = :queueStatus AND
-                qc.retryCount < :retryCount
-                ORDER BY qc.priority DESC, qc.createDate DESC";
+                qc.retryCount <= :retryCount AND
+                qc.lastUpdateDate <=  :anHourAgo
+                ORDER BY qc.priority DESC, qc.lastUpdateDate ASC";
+
+        $anHourAgo = new DateTime();
+        $anHourAgo->modify('-1 hour');
 
         $query = $this->entityManager->createQuery($dql)->setMaxResults($limit);
 
         $query->setParameters(array('queueStatus' => self::STATUS_FAILED,
-                                    'retryCount'  => self::MAX_RETRY_COUNT));
+                                    'retryCount'  => self::MAX_RETRY_COUNT,
+                                    'anHourAgo'   => $anHourAgo));
 
         $result = $query->getResult();
 

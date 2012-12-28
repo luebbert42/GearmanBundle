@@ -137,6 +137,22 @@ class QueueControl
      */
     private $retryCount = 0;
 
+    /**
+     * Total Children
+     * @var int $totalChildren
+     *
+     * @ORM\Column(name="total_children", type="integer", nullable=true, options={"default"=0})
+     */
+    private $totalChildren = 0;
+
+
+    /**
+     * Incomplete Child jobs
+     * @var int $incompleteJobs
+     *
+     * @ORM\Column(name="incomplete_jobs", type="integer", nullable=true, options={"default"=0})
+     */
+    private $incompleteJobs = 0;
 
     /**
      * Context of the job

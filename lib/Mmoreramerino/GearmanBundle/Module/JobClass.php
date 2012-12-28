@@ -139,7 +139,7 @@ class JobClass extends ContainerAware
             'methodName'            =>  $this->methodName,
             'realCallableName'      =>  $this->realCallableName,
             'description'           =>  $this->description,
-            'iterations'			=>  $this->iterations,
+            'iterations'            =>  $this->iterations,
             'servers'               =>  $this->servers,
             'defaultMethod'         =>  $this->defaultMethod,
         );

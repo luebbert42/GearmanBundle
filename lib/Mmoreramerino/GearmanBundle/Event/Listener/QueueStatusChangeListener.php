@@ -40,10 +40,17 @@ class QueueStatusChangeListener
         $job = $event->getJob();
         echo 'Job Changed status...'.PHP_EOL;
 
-        if (($parent = $job->getParent()) !== null) {
-            echo 'My parent is waiting...'.PHP_EOL;
-            $event->getGearmanHelper()->enqueueJob($parent);
-            echo 'Parent Executed...'.PHP_EOL;
+        if (($parent = $job->getParent()) !== null && $job->getQueueStatus()->getId() === GearmanHelper::STATUS_COMPLETED) {
+
+            $rowsUpdated = $event->getGearmanHelper()->decreaseChildCounter($parent->getId());
+
+            echo "I updated $rowsUpdated \n";
+
+            //All Children are done. Ready to execute parent
+            if ($rowsUpdated === 0) {
+            	$event->getGearmanHelper()->enqueueJob($parent);
+            	echo 'Parent Executed...'.PHP_EOL;
+            }
         }
     }
 }

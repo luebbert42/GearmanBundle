@@ -24,6 +24,7 @@ class GearmanPersistentQueueRetryFailedCommand extends ContainerAwareCommand
     {
         parent::configure();
         $this->setName('gearman:persistent-queue:retry-failed')
+             ->addOption('submit', false, InputOption::VALUE_OPTIONAL, 'How many to retry', 100)
              ->setDescription('Execute all jobs that are on status Waiting');
     }
 
@@ -39,9 +40,10 @@ class GearmanPersistentQueueRetryFailedCommand extends ContainerAwareCommand
      */
     protected function execute(InputInterface $input, OutputInterface $output)
     {
+        $submit = $input->getOption('submit');
         $gearmanHelper = $this->getContainer()->get('gearman.helper');
 
-        $pendingJobs = $gearmanHelper->retryFailedJobs();
+        $pendingJobs = $gearmanHelper->retryFailedJobs($submit);
 
 
 
