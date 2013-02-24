@@ -11,3 +11,5 @@ Info. Some changes for new version of GearmanBundle.
 * Everytime you use gearman annotations, you must specify namespace (use). For more information, http://mmoreramerino.github.com/GearmanBundle/annotations.html
 
 All documentation is available at http://mmoreramerino.github.com/GearmanBundle
+
+// test commit
