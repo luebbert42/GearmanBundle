@@ -509,6 +509,11 @@ class GearmanClient extends GearmanService
      */
     public function getJobStatus($jobHandler)
     {
+        if (null == $this->client) {
+            $gmclient = new \GearmanClient();
+            $this->client = $gmclient;
+            $this->assignServers($this->client);
+        }
         return $this->client->jobStatus($jobHandler);
     }
 }
