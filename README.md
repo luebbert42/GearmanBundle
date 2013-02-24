@@ -12,4 +12,3 @@ Info. Some changes for new version of GearmanBundle.
 
 All documentation is available at http://mmoreramerino.github.com/GearmanBundle
 
-// test commit
