@@ -117,7 +117,6 @@ class GearmanClient extends GearmanService
         $gmclient = new \GearmanClient();
         $this->client = $gmclient;
         $this->assignServers($gmclient);
-
         return $gmclient->$method($worker['job']['realCallableName'], serialize($params), $unique);
     }
 
@@ -132,7 +131,6 @@ class GearmanClient extends GearmanService
     public function setServer($servername, $port = 4730)
     {
         $this->server = array($servername, $port);
-
         return $this;
     }
 
@@ -501,6 +499,71 @@ class GearmanClient extends GearmanService
 
         return $gearmanClient->runTasks();
     }
+
+    /**
+     * get status from Gearman, returns GEARMAN_COULD_NOT_CONNECT (26) if
+     * @return array | null
+     */
+    public function getGearmanStatus(){
+        $settings = $this->loadSettings();
+        $this->server = $settings['defaults']['servers'];
+        $statusList = array();
+        foreach ($this->server as $server) {
+            $statusList[$server["hostname"].":".$server["port"]] = $this->getStatusFromSingleServer($server["hostname"],$server["port"]);
+        }
+        return $statusList;
+    }
+
+    /**
+     * gets the status of a given server, returns GEARMAN_COULD_NOT_CONNECT (26) if Gearman is not available
+     * @param $hostname
+     * @param $port
+     * @return int|null
+     */
+    public function getStatusFromSingleServer($hostname, $port) {
+        $handle = @fsockopen($hostname,$port,$errorNumber,$errorString,30);
+        if($handle === false){
+            return GEARMAN_COULD_NOT_CONNECT;
+        }
+        $status = null;
+        fwrite($handle,"status\n");
+        while (!feof($handle)) {
+            $line = fgets($handle, 4096);
+            if( $line==".\n"){
+                break;
+            }
+            if( preg_match("~^(.*)[ \t](\d+)[ \t](\d+)[ \t](\d+)~",$line,$matches) ){
+                $function = $matches[1];
+                $status['operations'][$function] = array(
+                    'function' => $function,
+                    'total' => $matches[2],
+                    'running' => $matches[3],
+                    'connectedWorkers' => $matches[4],
+                );
+            }
+        }
+        fwrite($handle,"workers\n");
+        while (!feof($handle)) {
+            $line = fgets($handle, 4096);
+            if( $line==".\n"){
+                break;
+            }
+            // FD IP-ADDRESS CLIENT-ID : FUNCTION
+            if( preg_match("~^(\d+)[ \t](.*?)[ \t](.*?) : ?(.*)~",$line,$matches) ){
+                $fd = $matches[1];
+                $status['connections'][$fd] = array(
+                    'fd' => $fd,
+                    'ip' => $matches[2],
+                    'id' => $matches[3],
+                    'function' => $matches[4],
+                );
+            }
+        }
+       fclose($handle);
+       return $status;
+    }
+
+
     /**
      * Gets the status of a job
      *
